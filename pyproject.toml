@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doctorkit-core"
+version = "0.1.0"
+description = "Health-check engine for CLI tools - declare checks, get formatted diagnostics."
+readme = "README.md"
+license = { text = "BSD-2-Clause" }
+requires-python = ">=3.9"
+dependencies = []
+keywords = ["cli", "doctor", "diagnostics", "healthcheck", "devtools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Utilities",
+]
+
+[project.scripts]
+doctorkit = "doctorkit.cli:main"
+
+[project.urls]
+Repository = "https://github.com/r-seize/doctorkit"
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doctorkit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
