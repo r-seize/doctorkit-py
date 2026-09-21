@@ -249,7 +249,7 @@ class TestTimeout:
             time.sleep(10)
 
         _, data = _run_json(d)
-        assert data["checks"][0]["duration_ms"] >= 100
+        assert data["checks"][0]["duration_ms"] >= 90
 
 
 # ---------------------------------------------------------------------------

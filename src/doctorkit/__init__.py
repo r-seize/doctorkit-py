@@ -11,7 +11,7 @@ and should not be imported directly by consumers of the library.
 from ._doctor import Doctor
 from ._types import CheckInfo, CheckRecord, CheckResult, FixResult, RunResult, RunSummary
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "Doctor",

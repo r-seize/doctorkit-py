@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "doctorkit-core"
-version = "0.1.0"
+version = "0.1.1"
 description = "Health-check engine for CLI tools - declare checks, get formatted diagnostics."
 readme = "README.md"
 license = { text = "BSD-2-Clause" }
@@ -28,7 +28,7 @@ classifiers = [
 doctorkit = "doctorkit.cli:main"
 
 [project.urls]
-Repository = "https://github.com/r-seize/doctorkit"
+Repository = "https://github.com/r-seize/doctorkit-py"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
