@@ -5,6 +5,7 @@ No business logic, no I/O beyond writing to the provided stream.
 """
 from __future__ import annotations
 
+import json
 import xml.dom.minidom
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List
@@ -149,6 +150,35 @@ def _print_fix_section(
         if fr.status == "fix_error" and fr.exc_traceback:
             for line in fr.exc_traceback.rstrip().splitlines():
                 print(_c(f"    {line}", use_color, _DIM), file=out)
+
+
+def _render_tap(results: List[_Result]) -> str:
+    """Render check results as TAP version 13."""
+    lines: List[str] = ["TAP version 13", f"1..{len(results)}"]
+
+    for n, r in enumerate(results, start=1):
+        prefix = f"{r.tag}/{r.name}"
+
+        if r.status == "skipped":
+            reason = f" # SKIP {r.skip_reason}" if r.skip_reason else " # SKIP"
+            lines.append(f"ok {n} - {prefix}{reason}")
+        elif r.status == "ok":
+            lines.append(f"ok {n} - {prefix}")
+        else:
+            # warn, fail, error - warn still counts as a passing test
+            lines.append(f"{'ok' if r.status == 'warn' else 'not ok'} {n} - {prefix}")
+            lines.append("  ---")
+            if r.status in ("warn", "error"):
+                lines.append(f"  severity: {r.status}")
+            lines.append(f"  message: {json.dumps(r.message, ensure_ascii=False)}")
+            if r.hint:
+                lines.append(f"  hint: {json.dumps(r.hint, ensure_ascii=False)}")
+            lines.append(f"  duration_ms: {round(r.duration_ms)}")
+            if r.exc_traceback:
+                lines.append(f"  traceback: {json.dumps(r.exc_traceback, ensure_ascii=False)}")
+            lines.append("  ...")
+
+    return "\n".join(lines)
 
 
 def _render_junit_xml(results: List[_Result]) -> str:

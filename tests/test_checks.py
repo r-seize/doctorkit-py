@@ -6,7 +6,13 @@ import unittest.mock as mock
 import pytest
 
 from doctorkit.checks.env import env_check, envfile_check, envfile_vars_check
-from doctorkit.checks.filesystem import dir_exists_check, file_exists_check, writable_check
+from doctorkit.checks.filesystem import (
+    dir_exists_check,
+    disk_space_check,
+    file_exists_check,
+    writable_check,
+)
+from doctorkit.checks.network import ssl_cert_check
 from doctorkit.checks.process import command_check, _extract_version, _version_gte
 
 
@@ -119,6 +125,123 @@ class TestWritableCheck:
             assert "not writable" in result.message
         finally:
             os.chmod(str(d), 0o755)
+
+
+# ---------------------------------------------------------------------------
+# disk_space_check
+# ---------------------------------------------------------------------------
+
+
+class TestDiskSpaceCheck:
+    def test_ok_with_zero_minimum(self):
+        result = disk_space_check(tempfile.gettempdir(), min_free_gb=0)()
+        assert result.status == "ok"
+        assert "GB free" in result.message
+
+    def test_fail_when_minimum_impossibly_high(self):
+        result = disk_space_check(tempfile.gettempdir(), min_free_gb=9_999_999)()
+        assert result.status == "fail"
+        assert "minimum" in result.message
+        assert "disk space" in result.hint
+
+    def test_fail_on_nonexistent_path(self):
+        result = disk_space_check("/nonexistent/path/xyz")()
+        assert result.status == "fail"
+
+    def test_defaults_to_home_directory(self):
+        result = disk_space_check(min_free_gb=0)()
+        assert result.status == "ok"
+        assert os.path.expanduser("~") in result.message
+
+
+# ---------------------------------------------------------------------------
+# ssl_cert_check
+# ---------------------------------------------------------------------------
+
+
+class _FakeTlsSocket:
+    def __init__(self, cert):
+        self._cert = cert
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def getpeercert(self):
+        return self._cert
+
+
+def _patch_tls(monkeypatch, cert):
+    """Make ssl_cert_check see *cert* without touching the network."""
+    import socket
+    import ssl
+
+    class _Ctx:
+        def wrap_socket(self, sock, server_hostname=None):
+            return _FakeTlsSocket(cert)
+
+    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: _FakeTlsSocket(None))
+    monkeypatch.setattr(ssl, "create_default_context", lambda: _Ctx())
+
+
+def _not_after(days_from_now: float) -> str:
+    import time
+
+    return time.strftime("%b %d %H:%M:%S %Y GMT", time.gmtime(time.time() + days_from_now * 86400))
+
+
+class TestSslCertCheck:
+    def test_returns_callable(self):
+        assert callable(ssl_cert_check("example.com"))
+
+    def test_fails_gracefully_on_invalid_hostname(self):
+        result = ssl_cert_check("__invalid_host_that_does_not_exist__.example", timeout=2)()
+        assert result.status == "fail"
+
+    def test_ok_when_far_from_expiry(self, monkeypatch):
+        _patch_tls(monkeypatch, {"notAfter": _not_after(90)})
+        result = ssl_cert_check("example.com")()
+        assert result.status == "ok"
+        assert "expires in" in result.message
+
+    def test_warn_when_close_to_expiry(self, monkeypatch):
+        _patch_tls(monkeypatch, {"notAfter": _not_after(5)})
+        result = ssl_cert_check("example.com")()
+        assert result.status == "warn"
+        assert "Renew" in result.hint
+
+    def test_min_days_remaining_is_configurable(self, monkeypatch):
+        _patch_tls(monkeypatch, {"notAfter": _not_after(20)})
+        assert ssl_cert_check("example.com")().status == "ok"
+        assert ssl_cert_check("example.com", min_days_remaining=30)().status == "warn"
+
+    def test_fail_when_expired(self, monkeypatch):
+        _patch_tls(monkeypatch, {"notAfter": _not_after(-3)})
+        result = ssl_cert_check("example.com")()
+        assert result.status == "fail"
+        assert "expired" in result.message
+
+    def test_fail_when_verification_reports_expired(self, monkeypatch):
+        import socket
+        import ssl
+
+        def _raise(*a, **k):
+            err = ssl.SSLCertVerificationError(1, "certificate verify failed")
+            err.verify_message = "certificate has expired"
+            raise err
+
+        monkeypatch.setattr(socket, "create_connection", _raise)
+        result = ssl_cert_check("example.com")()
+        assert result.status == "fail"
+        assert "expired" in result.message
+
+    def test_fail_when_no_certificate(self, monkeypatch):
+        _patch_tls(monkeypatch, {})
+        result = ssl_cert_check("example.com")()
+        assert result.status == "fail"
+        assert "no certificate" in result.message
 
 
 # ---------------------------------------------------------------------------

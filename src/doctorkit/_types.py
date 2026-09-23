@@ -72,9 +72,10 @@ class RunSummary:
     """Summary counts from a completed run."""
     ok: int
     warn: int
-    fail: int
+    fail: int  # includes error count
     skipped: int
     slow: int
+    error: int = 0  # subset of fail: checks that raised an unexpected exception
 
 
 @dataclasses.dataclass

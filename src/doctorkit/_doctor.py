@@ -31,6 +31,7 @@ from ._renderer import (
     _print_fix_section,
     _print_result,
     _render_junit_xml,
+    _render_tap,
 )
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -148,6 +149,7 @@ class Doctor:
         verbose: bool = False,
         json_output: bool = False,
         junit_xml: bool = False,
+        tap: bool = False,
         fail_fast: bool = False,
         max_failures: Optional[int] = None,
         slow_threshold_ms: Optional[float] = None,
@@ -172,6 +174,7 @@ class Doctor:
             verbose=verbose,
             json_output=json_output,
             junit_xml=junit_xml,
+            tap=tap,
             fail_fast=fail_fast,
             max_failures=max_failures,
             slow_threshold_ms=slow_threshold_ms,
@@ -193,6 +196,7 @@ class Doctor:
         verbose: bool = False,
         json_output: bool = False,
         junit_xml: bool = False,
+        tap: bool = False,
         fail_fast: bool = False,
         max_failures: Optional[int] = None,
         slow_threshold_ms: Optional[float] = None,
@@ -221,6 +225,7 @@ class Doctor:
             verbose=verbose,
             json_output=json_output,
             junit_xml=junit_xml,
+            tap=tap,
             fail_fast=fail_fast,
             max_failures=max_failures,
             slow_threshold_ms=slow_threshold_ms,
@@ -239,6 +244,7 @@ class Doctor:
                 fail=sum(1 for r in all_results if r.status in ("fail", "error")),
                 skipped=sum(1 for r in all_results if r.status == "skipped"),
                 slow=sum(1 for r in all_results if r.is_slow),
+                error=sum(1 for r in all_results if r.status == "error"),
             ),
             checks=[
                 CheckRecord(
@@ -271,6 +277,7 @@ class Doctor:
         verbose: bool,
         json_output: bool,
         junit_xml: bool,
+        tap: bool,
         fail_fast: bool,
         max_failures: Optional[int],
         slow_threshold_ms: Optional[float],
@@ -286,6 +293,7 @@ class Doctor:
         use_color = (
             not json_output
             and not junit_xml
+            and not tap
             and hasattr(out, "isatty")
             and out.isatty()
         )
@@ -399,7 +407,7 @@ class Doctor:
                 done[cd.name] = r
                 all_results.append(r)
 
-                if not json_output and not junit_xml and not quiet:
+                if not json_output and not junit_xml and not tap and not quiet:
                     if cd.tag != current_tag:
                         current_tag = cd.tag
                         print(
@@ -413,6 +421,7 @@ class Doctor:
         ok_n = sum(1 for r in all_results if r.status == "ok")
         warn_n = sum(1 for r in all_results if r.status == "warn")
         fail_n = sum(1 for r in all_results if r.status in ("fail", "error"))
+        error_n = sum(1 for r in all_results if r.status == "error")
         skip_n = sum(1 for r in all_results if r.status == "skipped")
         slow_n = sum(1 for r in all_results if r.is_slow)
 
@@ -451,16 +460,20 @@ class Doctor:
                 "ok": ok_n,
                 "warn": warn_n,
                 "fail": fail_n,
+                "error": error_n,
                 "skipped": skip_n,
                 "slow": slow_n,
             },
             "exit_code": exit_code,
+            "total_ms": round(total_ms, 1),
         }
 
         if junit_xml:
             print(_render_junit_xml(all_results), file=out)
         elif json_output:
             print(json.dumps(_payload, indent=2), file=out)
+        elif tap:
+            print(_render_tap(all_results), file=out)
         else:
             parts: List[str] = []
             if ok_n:

@@ -32,6 +32,7 @@
   - [Verbose mode](#verbose-mode)
   - [Quiet mode](#quiet-mode)
   - [JSON output](#json-output)
+  - [TAP output](#tap-output)
   - [JUnit XML output](#junit-xml-output)
 - [Exit codes](#exit-codes)
 - [Listing checks without running](#listing-checks-without-running)
@@ -237,6 +238,7 @@ exit_code = doctor.run(
     verbose=False,                 # full detail including durations
     json_output=False,             # structured JSON output
     junit_xml=False,               # JUnit XML output (for CI)
+    tap=False,                     # TAP version 13 output
     json_file="results.json",      # also write JSON to this file
     junit_file="results.xml",      # also write JUnit XML to this file
     fail_fast=False,               # stop after first failure
@@ -480,12 +482,35 @@ Badges are colored only when writing to a TTY. In non-TTY mode (CI, pipes, redir
     "ok": 1,
     "warn": 0,
     "fail": 1,
+    "error": 0,
     "skipped": 1,
     "slow": 0
   },
-  "exit_code": 1
+  "exit_code": 1,
+  "total_ms": 347.2
 }
 ```
+
+`summary.error` counts checks that raised an unexpected exception (a subset of `summary.fail`). `total_ms` is the total wall-clock time of the run in milliseconds.
+
+### TAP output
+
+`tap=True` emits [TAP version 13](https://testanything.org/tap-version-13-specification.html) - consumable by any TAP-compatible reporter.
+
+```
+TAP version 13
+1..3
+ok 1 - network/network-reachable
+not ok 2 - auth/api-key-set
+  ---
+  message: "ANTHROPIC_API_KEY is not set"
+  hint: "Run: export ANTHROPIC_API_KEY=sk-ant-..."
+  duration_ms: 12
+  ...
+ok 3 - auth/api-key-format # SKIP depends on 'api-key-set' which failed
+```
+
+Each test line uses the `tag/check-name` format. Skipped checks include a `# SKIP` directive with the reason. Failed and warn checks include a YAML block with `message`, `hint`, `duration_ms`, and optionally `traceback` (for error status). Exit codes are unchanged.
 
 ### JUnit XML output
 
@@ -615,7 +640,7 @@ The `has_fix` field on `CheckInfo` (returned by `list_checks()`) indicates wheth
 ### network
 
 ```python
-from doctorkit.checks.network import http_check, tcp_check, dns_check
+from doctorkit.checks.network import http_check, tcp_check, dns_check, ssl_cert_check
 
 # HTTP HEAD request - verifies URL responds with expected status
 doctor.add("api-health", http_check("https://api.example.com/health"), tag="network")
@@ -627,6 +652,10 @@ doctor.add("redis",    tcp_check("localhost", 6379, timeout=3.0), tag="deps")
 
 # DNS resolution
 doctor.add("dns-api", dns_check("api.example.com"), tag="network")
+
+# SSL certificate validity - warns when expiry is within min_days_remaining (default 14)
+doctor.add("ssl-api",  ssl_cert_check("api.example.com"), tag="network")
+doctor.add("ssl-site", ssl_cert_check("example.com", min_days_remaining=30), tag="network")
 ```
 
 ### env
@@ -648,11 +677,15 @@ doctor.add("env-vars", envfile_vars_check(".env.example", env_file=".env"), tag=
 ### filesystem
 
 ```python
-from doctorkit.checks.filesystem import dir_exists_check, file_exists_check, writable_check
+from doctorkit.checks.filesystem import dir_exists_check, file_exists_check, writable_check, disk_space_check
 
 doctor.add("logs-dir",   dir_exists_check("logs"), tag="filesystem")
 doctor.add("config",     file_exists_check("config.yaml"), tag="filesystem")
 doctor.add("tmp-write",  writable_check("/tmp"), tag="filesystem")
+
+# Disk space - fails when free space falls below min_free_gb (default 1 GB)
+doctor.add("disk-home",  disk_space_check(), tag="filesystem")             # checks home dir, 1 GB min
+doctor.add("disk-data",  disk_space_check("/data", min_free_gb=5), tag="filesystem")
 ```
 
 ### process
@@ -756,6 +789,7 @@ Executes all checks and returns an exit code. Full parameters:
 | `verbose` | `bool` | `False` | Show full detail on every check; errors include traceback |
 | `json_output` | `bool` | `False` | Emit a JSON object instead of human output |
 | `junit_xml` | `bool` | `False` | Emit JUnit XML instead of human output |
+| `tap` | `bool` | `False` | Emit TAP version 13 output instead of human output |
 | `fail_fast` | `bool` | `False` | Stop after the first `fail` or `error` |
 | `max_failures` | `int \| None` | `None` | Stop after this many cumulative failures/errors |
 | `slow_threshold_ms` | `float \| None` | `None` | Flag passing checks that exceed this duration in ms |
@@ -802,9 +836,10 @@ from doctorkit import RunSummary
 class RunSummary:
     ok: int
     warn: int
-    fail: int
+    fail: int       # includes error count
     skipped: int
     slow: int
+    error: int = 0  # subset of fail: checks that raised an unexpected exception
 ```
 
 

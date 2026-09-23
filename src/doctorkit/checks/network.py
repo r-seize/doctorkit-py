@@ -1,10 +1,12 @@
-"""doctorkit.checks.network - HTTP, TCP and DNS check factories.
+"""doctorkit.checks.network - HTTP, TCP, DNS and SSL certificate check factories.
 
-All checks use Python stdlib only (socket, urllib).
+All checks use Python stdlib only (socket, ssl, urllib).
 """
 from __future__ import annotations
 
 import socket
+import ssl
+import time
 import urllib.error
 import urllib.request
 from typing import Callable
@@ -87,5 +89,80 @@ def dns_check(hostname: str) -> Callable[[], CheckResult]:
                 message=f"DNS lookup failed for {hostname}: {exc}",
                 hint="Check your DNS configuration or network connectivity",
             )
+
+    return _check
+
+
+def ssl_cert_check(
+    hostname: str,
+    *,
+    port: int = 443,
+    min_days_remaining: int = 14,
+    timeout: float = 10.0,
+) -> Callable[[], CheckResult]:
+    """Return a check function that verifies the TLS certificate of *hostname*.
+
+    ``fail`` if the certificate is expired or the TLS handshake fails,
+    ``warn`` if it expires in fewer than *min_days_remaining* days.
+    """
+    def _check() -> CheckResult:
+        hint_access = (
+            f"Check that {hostname}:{port} is accessible and has a valid certificate"
+        )
+        try:
+            context = ssl.create_default_context()
+            with socket.create_connection((hostname, port), timeout=timeout) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as tls:
+                    cert = tls.getpeercert()
+        except socket.timeout:
+            return CheckResult(
+                status="fail",
+                message=f"{hostname}:{port} TLS connection timed out",
+                hint=f"Check that {hostname}:{port} is accessible",
+            )
+        except ssl.SSLCertVerificationError as exc:
+            if "expired" in (exc.verify_message or "").lower():
+                return CheckResult(
+                    status="fail",
+                    message=f"{hostname}: certificate expired",
+                    hint=f"Renew the SSL certificate for {hostname}",
+                )
+            return CheckResult(
+                status="fail",
+                message=f"{hostname}: TLS error - {exc.verify_message or exc}",
+                hint=hint_access,
+            )
+        except OSError as exc:
+            return CheckResult(
+                status="fail",
+                message=f"{hostname}: TLS error - {exc}",
+                hint=hint_access,
+            )
+
+        not_after = cert.get("notAfter") if cert else None
+        if not isinstance(not_after, str) or not not_after:
+            return CheckResult(
+                status="fail",
+                message=f"{hostname}: no certificate returned",
+            )
+
+        days_remaining = int((ssl.cert_time_to_seconds(not_after) - time.time()) // 86400)
+
+        if days_remaining < 0:
+            return CheckResult(
+                status="fail",
+                message=f"{hostname}: certificate expired {abs(days_remaining)} day(s) ago",
+                hint=f"Renew the SSL certificate for {hostname}",
+            )
+        if days_remaining < min_days_remaining:
+            return CheckResult(
+                status="warn",
+                message=f"{hostname}: certificate expires in {days_remaining} day(s)",
+                hint=f"Renew the SSL certificate for {hostname} soon",
+            )
+        return CheckResult(
+            status="ok",
+            message=f"{hostname}: certificate valid, expires in {days_remaining} day(s)",
+        )
 
     return _check

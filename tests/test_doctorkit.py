@@ -1446,3 +1446,130 @@ class TestFileOutput:
         data = json.loads(out_file.read_text())
         assert data["checks"][0]["fix_status"] == "fixed"
         assert data["checks"][0]["fix_message"] == "repaired"
+
+
+# ---------------------------------------------------------------------------
+# TAP output
+# ---------------------------------------------------------------------------
+
+
+class TestTapOutput:
+    def _run_tap(self, d: Doctor, **kwargs) -> tuple[int, str]:
+        out = io.StringIO()
+        code = d.run(tap=True, output=out, **kwargs)
+        return code, out.getvalue()
+
+    def test_starts_with_version_and_plan(self):
+        d = _doctor()
+        d.add("a", lambda: CheckResult(status="ok", message="ok"), tag="t")
+        d.add("b", lambda: CheckResult(status="ok", message="ok"), tag="t")
+        _, tap = self._run_tap(d)
+        lines = tap.splitlines()
+        assert lines[0] == "TAP version 13"
+        assert lines[1] == "1..2"
+
+    def test_ok_check(self):
+        d = _doctor()
+        d.add("my-check", lambda: CheckResult(status="ok", message="ok"), tag="network")
+        _, tap = self._run_tap(d)
+        assert "ok 1 - network/my-check" in tap
+        assert "not ok" not in tap
+
+    def test_fail_check_has_yaml_block(self):
+        d = _doctor()
+        d.add(
+            "broken",
+            lambda: CheckResult(status="fail", message="key missing", hint="set it"),
+            tag="auth",
+        )
+        _, tap = self._run_tap(d)
+        assert "not ok 1 - auth/broken" in tap
+        assert '  message: "key missing"' in tap
+        assert '  hint: "set it"' in tap
+        assert "  ---" in tap and "  ..." in tap
+
+    def test_skipped_check_has_skip_directive(self):
+        d = _doctor()
+        d.add("dep", lambda: CheckResult(status="fail", message="fail"), tag="t")
+        d.add("child", lambda: CheckResult(status="ok", message="ok"), tag="t", depends_on=["dep"])
+        _, tap = self._run_tap(d)
+        assert "ok 2 - t/child # SKIP depends on 'dep' which failed" in tap
+
+    def test_warn_check_is_ok_with_severity(self):
+        d = _doctor()
+        d.add("c", lambda: CheckResult(status="warn", message="somewhat slow"), tag="t")
+        _, tap = self._run_tap(d)
+        assert "ok 1 - t/c" in tap
+        assert "severity: warn" in tap
+        assert "somewhat slow" in tap
+
+    def test_error_check_has_severity_and_traceback(self):
+        d = _doctor()
+
+        def _boom():
+            raise RuntimeError("crash")
+
+        d.add("boom", _boom, tag="t")
+        code, tap = self._run_tap(d)
+        assert code == 2
+        assert "not ok 1 - t/boom" in tap
+        assert "severity: error" in tap
+        assert "traceback:" in tap
+
+    def test_exit_code_unchanged(self):
+        d = _doctor()
+        d.add("c", lambda: CheckResult(status="fail", message="bad"), tag="t")
+        code, _ = self._run_tap(d)
+        assert code == 1
+
+    def test_plan_count_matches_checks(self):
+        d = _doctor()
+        for i in range(5):
+            d.add(f"c{i}", lambda: CheckResult(status="ok", message="ok"), tag="t")
+        _, tap = self._run_tap(d)
+        assert "1..5" in tap
+
+    def test_no_human_output_or_ansi(self):
+        d = _doctor()
+        d.add("c", lambda: CheckResult(status="ok", message="ok"), tag="t")
+        _, tap = self._run_tap(d)
+        assert "[GOOD]" not in tap
+        assert "\033" not in tap
+        assert "total" not in tap
+
+
+# ---------------------------------------------------------------------------
+# summary.error and total_ms
+# ---------------------------------------------------------------------------
+
+
+class TestErrorSummaryAndTotalMs:
+    def _mixed(self) -> Doctor:
+        d = _doctor()
+        d.add("a", lambda: CheckResult(status="fail", message="fail"), tag="t")
+
+        def _boom():
+            raise RuntimeError("crash")
+
+        d.add("b", _boom, tag="t")
+        return d
+
+    def test_json_summary_error_counts_only_exceptions(self):
+        _, data = _run_json(self._mixed())
+        assert data["summary"]["fail"] == 2
+        assert data["summary"]["error"] == 1
+
+    def test_json_has_total_ms(self):
+        _, data = _run_json(self._mixed())
+        assert isinstance(data["total_ms"], (int, float))
+        assert data["total_ms"] >= 0
+
+    def test_run_detailed_summary_error(self):
+        result = self._mixed().run_detailed(output=io.StringIO())
+        assert result.summary.fail == 2
+        assert result.summary.error == 1
+
+    def test_error_defaults_to_zero(self):
+        d = _doctor()
+        d.add("a", lambda: CheckResult(status="ok", message="ok"), tag="t")
+        assert d.run_detailed(output=io.StringIO()).summary.error == 0
